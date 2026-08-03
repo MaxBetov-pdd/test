@@ -232,6 +232,18 @@ def query_device(timeout: float = 0) -> DeviceInfo | None:
     )
 
 
+def query_mode() -> str | None:
+    """Return DFU/Recovery from VID:PID without opening USB descriptors.
+
+    Windows can enumerate a newly booted composite Recovery device before its
+    WinUSB interface is usable.  Mode polling must therefore not depend on the
+    serial string or on successfully claiming the device.
+    """
+
+    device = _find_raw({DFU_PRODUCT_ID, *RECOVERY_PRODUCT_IDS})
+    return _mode_for_pid(int(device.idProduct)) if device is not None else None
+
+
 def _claim(device, interface: int = 0) -> None:
     usb_core, usb_util = _imports()
     try:

@@ -133,6 +133,11 @@ SEP, coprocessor firmware, DeviceTree, trustcache, ramdisk и kernel в том �
 порядке, что и `boot.sh`. Логотип на Windows по умолчанию пропускается; для
 готового `bootchain\...\logo.img4` можно передать `--logo`.
 
+Если iBEC уже перешёл в Recovery, но загрузка остановилась из-за смены Windows
+USB-драйвера, назначьте чистый WinUSB через Zadig интерфейсу Recovery
+`05AC:1281 MI_00`, затем продолжите без повторного DFU через
+`boot --resume-recovery --bootchain PATH --with-fw`.
+
 После запуска ramdisk оставьте первое окно открытым и во втором запустите:
 
 ```powershell

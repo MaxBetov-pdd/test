@@ -14,6 +14,7 @@ from ich_usb import (
     direct_pwned_dfu_boot,
     format_query,
     query_device,
+    query_mode,
 )
 
 
@@ -67,10 +68,9 @@ def wait_for_recovery(timeout: float) -> None:
     prompted = False
     while time.monotonic() < deadline:
         try:
-            info = query_device()
+            mode = query_mode() or "none"
         except IchUsbError:
-            info = None
-        mode = info.mode if info else "none"
+            mode = "none"
         if mode != last:
             print(f"  USB MODE: {mode}")
             last = mode
@@ -102,6 +102,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bootchain", help="bootchain directory; defaults to .last_bootchain")
     parser.add_argument("--bootargs", default=DEFAULT_BOOTARGS)
     parser.add_argument("--recovery-timeout", type=float, default=120)
+    parser.add_argument(
+        "--resume-recovery",
+        action="store_true",
+        help="skip the DFU/iBoot stage and continue from an already booted patched Recovery",
+    )
     fw = parser.add_mutually_exclusive_group()
     fw.add_argument("--with-fw", action="store_true", help="force coprocessor firmware upload")
     fw.add_argument("--no-fw", action="store_true", help="skip coprocessor firmware upload")
@@ -128,37 +133,48 @@ def main() -> int:
         sep_file = bootchain / "sep-firmware.img4"
         use_sep = args.sep or (not args.no_sep and sep_file.is_file())
 
-        info = query_device(timeout=8)
-        if info is None:
-            raise IchUsbError("No Apple DFU device found")
-        print(format_query(info))
-        if info.mode != "DFU" or info.pwned.lower() != "usbliter8":
-            raise IchUsbError(
-                f"Need pwned DFU (MODE=DFU, PWND=usbliter8); got MODE={info.mode}, PWND={info.pwned or 'none'}"
-            )
         print(f"Bootchain: {bootchain}")
         print(f"USB firmwares: {'enabled' if with_fw else 'disabled'}")
 
-        if use_ibss:
-            print("Loading iBSS (direct pwned DFU)...")
-            direct_pwned_dfu_boot(bootchain / "iBSS.patched.bin", progress=progress, warning=warning)
-            time.sleep(4)
-            with RecoveryClient(timeout=20) as client:
-                ibec = bootchain / "iBEC.patched.img4"
-                if not ibec.is_file():
-                    ibec = bootchain / "iBoot.patched.bin"
-                upload(client, ibec)
-                try:
-                    client.send_command("go")
-                except IchUsbError as exc:
-                    warning(str(exc))
-            time.sleep(3)
+        if args.resume_recovery:
+            mode = query_mode()
+            if mode != "Recovery":
+                raise IchUsbError(
+                    f"--resume-recovery requires MODE=Recovery; got MODE={mode or 'none'}"
+                )
+            print("Resuming from the already booted patched Recovery...")
+            with RecoveryClient(timeout=10) as client:
+                print(f"Recovery build: {client.getenv('build-version')}")
         else:
-            print("Loading iBEC (direct pwned DFU)...")
-            direct_pwned_dfu_boot(bootchain / "iBoot.patched.bin", progress=progress, warning=warning)
-            time.sleep(5)
+            info = query_device(timeout=8)
+            if info is None:
+                raise IchUsbError("No Apple DFU device found")
+            print(format_query(info))
+            if info.mode != "DFU" or info.pwned.lower() != "usbliter8":
+                raise IchUsbError(
+                    f"Need pwned DFU (MODE=DFU, PWND=usbliter8); got MODE={info.mode}, PWND={info.pwned or 'none'}"
+                )
 
-        wait_for_recovery(args.recovery_timeout)
+            if use_ibss:
+                print("Loading iBSS (direct pwned DFU)...")
+                direct_pwned_dfu_boot(bootchain / "iBSS.patched.bin", progress=progress, warning=warning)
+                time.sleep(4)
+                with RecoveryClient(timeout=20) as client:
+                    ibec = bootchain / "iBEC.patched.img4"
+                    if not ibec.is_file():
+                        ibec = bootchain / "iBoot.patched.bin"
+                    upload(client, ibec)
+                    try:
+                        client.send_command("go")
+                    except IchUsbError as exc:
+                        warning(str(exc))
+                time.sleep(3)
+            else:
+                print("Loading iBEC (direct pwned DFU)...")
+                direct_pwned_dfu_boot(bootchain / "iBoot.patched.bin", progress=progress, warning=warning)
+                time.sleep(5)
+
+            wait_for_recovery(args.recovery_timeout)
 
         with RecoveryClient(timeout=10) as client:
             try:
