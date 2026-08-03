@@ -1,0 +1,88 @@
+name: Build 23F84 ramdisk for Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-windows.txt
+
+      - name: Install build dependencies
+        run: |
+          brew install gnu-tar
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-windows.txt
+
+      - name: Download 23F84 components and export stock ramdisk
+        shell: bash
+        run: |
+          set +e
+          python windows/build.py \
+            --build 23F84 \
+            --product iPhone12,8 \
+            --board d79ap \
+            --cpid 0x8030 \
+            --with-fw
+          status=$?
+          set -e
+          if [[ "$status" -ne 4 ]]; then
+            echo "Expected preparation exit code 4, got $status" >&2
+            exit 1
+          fi
+
+      - name: Prepare APFS and inject SSH
+        id: ramdisk
+        shell: bash
+        run: |
+          job_path="$(find work -name ramdisk-job.json -print -quit)"
+          [[ -n "$job_path" ]] || { echo "ramdisk-job.json not found" >&2; exit 1; }
+          stock_path="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["stock_ramdisk"])' "$job_path")"
+          output_path="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["expected_output"])' "$job_path")"
+          bash scripts/prepare_ramdisk_macos.sh "$stock_path" "$output_path"
+          echo "path=$output_path" >> "$GITHUB_OUTPUT"
+
+      - name: Build complete Windows bootchain
+        shell: bash
+        run: |
+          python windows/build.py \
+            --build 23F84 \
+            --product iPhone12,8 \
+            --board d79ap \
+            --cpid 0x8030 \
+            --prepared-ramdisk "${{ steps.ramdisk.outputs.path }}" \
+            --kernel patched \
+            --kpf-set ios18 \
+            --with-fw
+
+      - name: Locate bootchain
+        id: bootchain
+        shell: bash
+        run: |
+          name="$(tr -d '\r\n' < .last_bootchain)"
+          [[ -d "bootchain/$name" ]] || { echo "bootchain/$name not found" >&2; exit 1; }
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Windows-ready bootchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: ICH-d79ap-26.5.2-23F84-ramdisk
+          path: |
+            bootchain/${{ steps.bootchain.outputs.name }}
+            .last_bootchain
+          if-no-files-found: error
+          retention-days: 7

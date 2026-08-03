@@ -6,6 +6,8 @@ Made by **[@Official_I_C_H](https://t.me/Official_I_C_H)** · [t.me/Official_I_C
 
 Not a jailbreak. Research use on devices you own.
 
+Windows host port (experimental): [README-Windows.md](README-Windows.md).
+
 If this helps you, please ⭐ **star the repo** — thanks.
 
 ## ☕ Buy Me a Coffee

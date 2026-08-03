@@ -2,6 +2,7 @@ cache/
 work/
 work_logo/
 bootchain/
+prepared-ramdisk/
 resources/ich_logo.raw
 resources/ich_logo_fullscreen.png
 resources/ich_boot_preview.png
