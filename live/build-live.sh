@@ -28,6 +28,10 @@ lb config noauto \
     --binary-images iso-hybrid \
     --debian-installer none \
     --archive-areas "main contrib non-free-firmware" \
+    --security false \
+    --mirror-bootstrap "http://deb.debian.org/debian" \
+    --mirror-chroot "http://deb.debian.org/debian" \
+    --mirror-binary "http://deb.debian.org/debian" \
     --apt-recommends true \
     --iso-application "ICH A12 A13 SSH Ramdisk Live" \
     --iso-publisher "MaxBetov-pdd/test" \
