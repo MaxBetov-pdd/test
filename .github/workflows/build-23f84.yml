@@ -103,13 +103,14 @@ jobs:
           name: ICH-d79ap-26.5.2-23F84-ramdisk
           path: .
 
-      - name: Install live-build
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y live-build rsync
-
       - name: Build ICH SE2 Live ISO
-        run: sudo bash live/build-live.sh
+        run: |
+          docker run --rm --privileged \
+            -e DEBIAN_FRONTEND=noninteractive \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:bookworm \
+            bash -lc 'apt-get update && apt-get install -y --no-install-recommends live-build rsync ca-certificates && bash live/build-live.sh'
 
       - name: Make ISO artifact readable
         run: sudo chown -R "$USER:$USER" live/dist
