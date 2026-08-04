@@ -556,7 +556,12 @@ def main() -> int:
         shutil.copy2(out / "iBoot.patched.bin", bootchain / "iBoot.patched.bin")
 
         if (work / "RestoreSEP.im4p").is_file():
-            wrap_existing_im4p(work / "RestoreSEP.im4p", bootchain / "sep-firmware.img4", ticket)
+            wrap_existing_im4p(
+                work / "RestoreSEP.im4p",
+                bootchain / "sep-firmware.img4",
+                ticket,
+                fourcc="rsep",
+            )
         if args.live_data:
             (bootchain / "live-data.enabled").write_text("1\n", encoding="ascii")
 

@@ -8,6 +8,9 @@ Not a jailbreak. Research use on devices you own.
 
 Windows host port (experimental): [README-Windows.md](README-Windows.md).
 
+Dedicated Linux Live USB (no Zadig/Apple driver switching):
+[README-Live.md](README-Live.md).
+
 If this helps you, please ⭐ **star the repo** — thanks.
 
 ## ☕ Buy Me a Coffee

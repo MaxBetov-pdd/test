@@ -9,6 +9,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -17,6 +18,7 @@ ROOT = WINDOWS_DIR.parent
 sys.path.insert(0, str(WINDOWS_DIR))
 
 import build  # noqa: E402
+import boot  # noqa: E402
 import ich_usb  # noqa: E402
 import iproxy  # noqa: E402
 from img4tools import extract_im4p, wrap_existing_im4p, wrap_raw  # noqa: E402
@@ -62,6 +64,25 @@ class DfuProtocolTests(unittest.TestCase):
             [(call[0], call[1], call[2], call[3], call[4]) for call in device.calls[-3:]],
             [(0x21, 1, 0, 0, b""), (0x21, 8, 0, 0, b""), (0x21, 6, 0, 0, b"")],
         )
+
+
+class TargetIdentityTests(unittest.TestCase):
+    def test_live_target_accepts_exact_board_and_ecid(self) -> None:
+        info = SimpleNamespace(board="d79ap", ecid="00094D3A3A6B802E")
+        args = SimpleNamespace(expected_board="d79ap", expected_ecid="0x94d3a3a6b802e")
+        boot.require_expected_target(info, args)
+
+    def test_live_target_rejects_other_board(self) -> None:
+        info = SimpleNamespace(board="n104ap", ecid="00094D3A3A6B802E")
+        args = SimpleNamespace(expected_board="d79ap", expected_ecid="")
+        with self.assertRaisesRegex(ich_usb.IchUsbError, "expected d79ap"):
+            boot.require_expected_target(info, args)
+
+    def test_live_target_rejects_other_ecid(self) -> None:
+        info = SimpleNamespace(board="d79ap", ecid="1")
+        args = SimpleNamespace(expected_board="d79ap", expected_ecid="2")
+        with self.assertRaisesRegex(ich_usb.IchUsbError, "expected 2"):
+            boot.require_expected_target(info, args)
 
 
 def _recv_exact(sock: socket.socket, size: int) -> bytes:

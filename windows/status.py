@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show an A12/A13 device connected in DFU or Recovery mode on Windows."""
+"""Show an A12/A13 device connected in DFU or Recovery mode."""
 
 from __future__ import annotations
 

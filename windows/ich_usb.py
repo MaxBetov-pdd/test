@@ -1,13 +1,15 @@
-"""Small Windows USB transport for ICH A12/A13 ramdisk.
+"""Small libusb transport for ICH A12/A13 ramdisk.
 
 This module replaces the subset of ``irecovery`` and ``usbliter8_boot`` used
-by the project.  It intentionally talks only to Apple's DFU/Recovery USB
-interfaces and never writes to a normal-mode iOS device.
+by the project on Windows and Linux.  It intentionally talks only to Apple's
+DFU/Recovery USB interfaces and never writes to a normal-mode iOS device.
 """
 
 from __future__ import annotations
 
 import re
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,9 +108,12 @@ def _imports():
         import usb.core
         import usb.util
     except ImportError as exc:
-        raise IchUsbError(
-            "PyUSB is not installed. Run: powershell -ExecutionPolicy Bypass -File .\\windows\\setup.ps1"
-        ) from exc
+        setup = (
+            "powershell -ExecutionPolicy Bypass -File .\\windows\\setup.ps1"
+            if sys.platform == "win32"
+            else "bash ./linux/setup.sh"
+        )
+        raise IchUsbError(f"PyUSB is not installed. Run: {setup}") from exc
     return usb.core, usb.util
 
 
@@ -123,9 +128,8 @@ def _backend():
 
         backend = libusb1.get_backend()
     if backend is None:
-        raise IchUsbError(
-            "No libusb backend was found. Re-run windows/setup.ps1 inside the project."
-        )
+        setup = "windows/setup.ps1" if sys.platform == "win32" else "linux/setup.sh"
+        raise IchUsbError(f"No libusb backend was found. Re-run {setup} inside the project.")
     # Keep a reference to usb.core so frozen/static analysers do not treat the
     # import as unused; more importantly, this validates the loaded backend.
     _ = usb_core
@@ -183,6 +187,12 @@ def _friendly_usb_error(exc: BaseException) -> IchUsbError:
     text = str(exc)
     lower = text.lower()
     if "access" in lower or "permission" in lower or "busy" in lower:
+        if sys.platform != "win32":
+            return IchUsbError(
+                f"Linux USB access was denied ({text}). Reload the ICH udev rules with "
+                "sudo udevadm control --reload-rules && sudo udevadm trigger, then reconnect "
+                "the current Apple DFU/Recovery device."
+            )
         return IchUsbError(
             f"Windows USB driver denied access ({text}). Install WinUSB for the current Apple "
             "DFU/Recovery device with Zadig, then reconnect it."
@@ -211,6 +221,22 @@ def _serial_for(device) -> str:
         raise _friendly_usb_error(exc) from exc
 
 
+def _nonce_fields_for(device) -> dict[str, str]:
+    """Read AP/SEP nonces from USB string descriptor 1.
+
+    libirecovery obtains NONC and SNON from descriptor 1 rather than the USB
+    serial descriptor.  Not every mode exposes it, so absence is non-fatal.
+    """
+
+    _, usb_util = _imports()
+    try:
+        descriptor = str(usb_util.get_string(device, 1) or "")
+    except Exception:
+        return {}
+    fields = parse_serial(descriptor)
+    return {key: fields[key] for key in ("NONC", "SNON") if fields.get(key)}
+
+
 def query_device(timeout: float = 0) -> DeviceInfo | None:
     product_ids = {DFU_PRODUCT_ID, *RECOVERY_PRODUCT_IDS}
     device = wait_for_raw(product_ids, timeout) if timeout > 0 else _find_raw(product_ids)
@@ -218,6 +244,7 @@ def query_device(timeout: float = 0) -> DeviceInfo | None:
         return None
     serial = _serial_for(device)
     fields = parse_serial(serial)
+    fields.update(_nonce_fields_for(device))
     cpid = _hex_field(fields, "CPID")
     bdid = _hex_field(fields, "BDID")
     record = DEVICE_DB.get((cpid, bdid)) if cpid is not None and bdid is not None else None
@@ -339,12 +366,17 @@ class RecoveryClient:
     """Subset of irecovery used by boot.sh: upload, command and getenv."""
 
     def __init__(self, timeout: float = 8):
-        self._usb_core, _ = _imports()
+        self._usb_core, self._usb_util = _imports()
         self.device = wait_for_raw(RECOVERY_PRODUCT_IDS, timeout)
+        self._console_stop: threading.Event | None = None
+        self._console_thread: threading.Thread | None = None
+        self._console_claimed = False
+        self._console_callback: Callable[[bytes], None] | None = None
         _claim(self.device)
 
     def close(self) -> None:
         if self.device is not None:
+            self.stop_console()
             _release(self.device)
             self.device = None
 
@@ -357,11 +389,84 @@ class RecoveryClient:
     def send_command(self, command: str, timeout_ms: int = 30_000) -> None:
         if self.device is None:
             raise IchUsbError("Recovery connection is closed")
+        self.console_marker(f"command: {command}")
         payload = command.encode("utf-8") + b"\0"
         try:
             self.device.ctrl_transfer(0x40, 0, 0, 0, payload, timeout=timeout_ms)
         except self._usb_core.USBError as exc:
             raise IchUsbError(f"Recovery command failed ({command!r}): {exc}") from exc
+
+    def start_console(self, callback: Callable[[bytes], None]) -> None:
+        """Read the iBoot USB console (interface 1, alt 1, endpoint 0x81).
+
+        Recovery commands use interface 0.  Keeping the console reader on the
+        same libusb handle lets boot.py capture the last iBoot message and any
+        early boot output without requiring a second program or a DCSD cable.
+        """
+
+        if self.device is None:
+            raise IchUsbError("Recovery connection is closed")
+        if self._console_thread is not None:
+            return
+        try:
+            self._usb_util.claim_interface(self.device, 1)
+            self._console_claimed = True
+            self.device.set_interface_altsetting(interface=1, alternate_setting=1)
+        except Exception as exc:
+            if self._console_claimed:
+                try:
+                    self._usb_util.release_interface(self.device, 1)
+                except Exception:
+                    pass
+                self._console_claimed = False
+            raise _friendly_usb_error(exc) from exc
+
+        stop = threading.Event()
+        self._console_stop = stop
+        self._console_callback = callback
+
+        def read_console() -> None:
+            while not stop.is_set() and self.device is not None:
+                try:
+                    data = bytes(self.device.read(0x81, 0x4000, timeout=250))
+                except self._usb_core.USBTimeoutError:
+                    continue
+                except (self._usb_core.USBError, OSError, ValueError):
+                    # bootx normally disconnects this USB handle.  The bytes
+                    # received before that point are the useful diagnostics.
+                    break
+                if data:
+                    callback(data)
+
+        self._console_thread = threading.Thread(
+            target=read_console,
+            name="ich-iboot-console",
+            daemon=True,
+        )
+        self._console_thread.start()
+
+    def stop_console(self) -> None:
+        if self._console_stop is not None:
+            self._console_stop.set()
+        if self._console_thread is not None:
+            self._console_thread.join(timeout=1)
+        self._console_thread = None
+        self._console_stop = None
+        if self.device is not None and self._console_claimed:
+            try:
+                self.device.set_interface_altsetting(interface=1, alternate_setting=0)
+            except Exception:
+                pass
+            try:
+                self._usb_util.release_interface(self.device, 1)
+            except Exception:
+                pass
+        self._console_claimed = False
+        self._console_callback = None
+
+    def console_marker(self, message: str) -> None:
+        if self._console_callback is not None:
+            self._console_callback(f"\n[HOST] {message}\n".encode("utf-8"))
 
     def getenv(self, name: str, timeout_ms: int = 10_000) -> str:
         self.send_command(f"getenv {name}", timeout_ms=timeout_ms)
@@ -380,6 +485,7 @@ class RecoveryClient:
     ) -> None:
         if self.device is None:
             raise IchUsbError("Recovery connection is closed")
+        self.console_marker(f"upload: {Path(path).name}")
         data = Path(path).read_bytes()
         if not data:
             raise IchUsbError(f"Upload file is empty: {path}")
@@ -416,4 +522,8 @@ def format_query(info: DeviceInfo) -> str:
         f"ECID: {info.ecid or 'unknown'}",
         f"PWND: {info.pwned or 'none'}",
     ]
+    if info.fields.get("NONC"):
+        lines.append(f"APNONCE: {info.fields['NONC']}")
+    if info.fields.get("SNON"):
+        lines.append(f"SEPNONCE: {info.fields['SNON']}")
     return "\n".join(lines)

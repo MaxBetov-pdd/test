@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Boot an already-built ICH bootchain from a Windows host."""
+"""Boot an already-built ICH bootchain through libusb on Windows or Linux."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -98,10 +100,31 @@ def upload(client: RecoveryClient, path: Path, command: str | None = None) -> No
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Boot an ICH A12/A13 ramdisk on Windows")
+    parser = argparse.ArgumentParser(description="Boot an ICH A12/A13 ramdisk through libusb")
     parser.add_argument("--bootchain", help="bootchain directory; defaults to .last_bootchain")
     parser.add_argument("--bootargs", default=DEFAULT_BOOTARGS)
     parser.add_argument("--recovery-timeout", type=float, default=120)
+    parser.add_argument(
+        "--expected-board",
+        default=os.environ.get("ICH_EXPECTED_BOARD", ""),
+        help="fail unless the connected board matches (or set ICH_EXPECTED_BOARD)",
+    )
+    parser.add_argument(
+        "--expected-ecid",
+        default=os.environ.get("ICH_EXPECTED_ECID", ""),
+        help="fail unless the connected ECID matches (or set ICH_EXPECTED_ECID)",
+    )
+    parser.add_argument(
+        "--console-log",
+        default=str(ROOT / "boot-console.log"),
+        help="capture the iBoot USB console around bootx (default: boot-console.log)",
+    )
+    parser.add_argument(
+        "--console-wait",
+        type=float,
+        default=20,
+        help="seconds to keep capturing the USB console after bootx",
+    )
     parser.add_argument(
         "--resume-recovery",
         action="store_true",
@@ -117,6 +140,24 @@ def parse_args() -> argparse.Namespace:
     sep.add_argument("--sep", action="store_true", help="force RestoreSEP upload")
     sep.add_argument("--no-sep", action="store_true", help="skip RestoreSEP")
     return parser.parse_args()
+
+
+def normalized_hex(value: str) -> str:
+    text = value.strip().lower().removeprefix("0x").replace("_", "")
+    if not text or any(character not in "0123456789abcdef" for character in text):
+        raise IchUsbError(f"Invalid hexadecimal identity value: {value!r}")
+    return text.lstrip("0") or "0"
+
+
+def require_expected_target(info, args: argparse.Namespace) -> None:
+    if args.expected_board and info.board.casefold() != args.expected_board.casefold():
+        raise IchUsbError(
+            f"Connected board is {info.board or 'unknown'}, expected {args.expected_board}"
+        )
+    if args.expected_ecid and normalized_hex(info.ecid) != normalized_hex(args.expected_ecid):
+        raise IchUsbError(
+            f"Connected ECID is {info.ecid or 'unknown'}, expected {args.expected_ecid}"
+        )
 
 
 def main() -> int:
@@ -137,11 +178,13 @@ def main() -> int:
         print(f"USB firmwares: {'enabled' if with_fw else 'disabled'}")
 
         if args.resume_recovery:
-            mode = query_mode()
+            info = query_device(timeout=8)
+            mode = info.mode if info is not None else None
             if mode != "Recovery":
                 raise IchUsbError(
                     f"--resume-recovery requires MODE=Recovery; got MODE={mode or 'none'}"
                 )
+            require_expected_target(info, args)
             print("Resuming from the already booted patched Recovery...")
             with RecoveryClient(timeout=10) as client:
                 print(f"Recovery build: {client.getenv('build-version')}")
@@ -150,6 +193,7 @@ def main() -> int:
             if info is None:
                 raise IchUsbError("No Apple DFU device found")
             print(format_query(info))
+            require_expected_target(info, args)
             if info.mode != "DFU" or info.pwned.lower() != "usbliter8":
                 raise IchUsbError(
                     f"Need pwned DFU (MODE=DFU, PWND=usbliter8); got MODE={info.mode}, PWND={info.pwned or 'none'}"
@@ -176,7 +220,27 @@ def main() -> int:
 
             wait_for_recovery(args.recovery_timeout)
 
-        with RecoveryClient(timeout=10) as client:
+        console_path = Path(args.console_log).expanduser().resolve()
+        console_path.parent.mkdir(parents=True, exist_ok=True)
+        console_lock = threading.Lock()
+        console_file = console_path.open("wb")
+
+        def console_output(data: bytes) -> None:
+            with console_lock:
+                console_file.write(data)
+                console_file.flush()
+                print(data.decode("utf-8", errors="replace"), end="", flush=True)
+
+        with console_file, RecoveryClient(timeout=10) as client:
+            console_started = False
+            try:
+                client.start_console(console_output)
+                console_started = True
+                print(f"Capturing iBoot console: {console_path}")
+                time.sleep(1)
+            except IchUsbError as exc:
+                warning(f"USB console unavailable: {exc}")
+
             try:
                 client.send_command("bgcolor 0 0 0")
             except IchUsbError as exc:
@@ -234,9 +298,15 @@ def main() -> int:
             except IchUsbError as exc:
                 # USB normally disappears immediately when bootx succeeds.
                 warning(f"bootx disconnected USB: {exc}")
+            if console_started and args.console_wait > 0:
+                time.sleep(args.console_wait)
+            client.stop_console()
 
         print("Ramdisk boot was triggered.")
-        print("Next: .\\.venv\\Scripts\\python.exe .\\windows\\iproxy.py 2222 22")
+        if sys.platform == "win32":
+            print("Next: .\\.venv\\Scripts\\python.exe .\\windows\\iproxy.py 2222 22")
+        else:
+            print("Next: ich iproxy 2222 22")
         print("Then: ssh root@localhost -p 2222   (password: alpine)")
         return 0
     except (IchUsbError, OSError) as exc:

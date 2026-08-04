@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+test -d /opt/ich
+python3 -m venv /opt/ich/.venv-linux
+/opt/ich/.venv-linux/bin/python -m pip install --no-cache-dir --upgrade pip
+/opt/ich/.venv-linux/bin/python -m pip install --no-cache-dir -r /opt/ich/requirements-linux.txt
+chmod 0755 /opt/ich/linux/ich /opt/ich/linux/setup.sh /usr/local/bin/ich-welcome
+ln -sfn /opt/ich/linux/ich /usr/local/bin/ich

@@ -1,0 +1,4 @@
+ICH_ROOT=/opt/ich
+ICH_PYTHON=/opt/ich/.venv-linux/bin/python
+ICH_EXPECTED_BOARD=d79ap
+ICH_EXPECTED_ECID=00094D3A3A6B802E

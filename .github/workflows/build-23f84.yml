@@ -1,4 +1,4 @@
-name: Build 23F84 ramdisk for Windows
+name: Build 23F84 ramdisk and Live USB
 
 on:
   workflow_dispatch:
@@ -84,5 +84,42 @@ jobs:
           path: |
             bootchain/${{ steps.bootchain.outputs.name }}
             .last_bootchain
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  build-live-iso:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download the ready 23F84 bootchain
+        uses: actions/download-artifact@v4
+        with:
+          name: ICH-d79ap-26.5.2-23F84-ramdisk
+          path: .
+
+      - name: Install live-build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y live-build rsync
+
+      - name: Build ICH SE2 Live ISO
+        run: sudo bash live/build-live.sh
+
+      - name: Make ISO artifact readable
+        run: sudo chown -R "$USER:$USER" live/dist
+
+      - name: Upload Live USB ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: ICH-SE2-Live-23F84
+          path: |
+            live/dist/ich-se2-live-amd64.iso
+            live/dist/ich-se2-live-amd64.iso.sha256
           if-no-files-found: error
           retention-days: 7

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=ICH SE2 Live
+Comment=Open the ICH ramdisk terminal
+Exec=xfce4-terminal --title="ICH SE2 Live" --command=/usr/local/bin/ich-welcome
+Terminal=false
+X-GNOME-Autostart-enabled=true

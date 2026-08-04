@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+cat <<'EOF'
+ICH SE2 Live is ready.
+
+Target: iPhone SE 2020 (iPhone12,8 / d79ap)
+ECID:   00094D3A3A6B802E
+
+1. Put the phone into PWND DFU with RP2350/usbliter8.
+2. Connect the Lightning USB-A cable.
+3. Run: ich status
+4. Run: ich boot --with-fw
+5. If the ramdisk starts, open another terminal:
+       ich iproxy 2222 22
+       ssh root@localhost -p 2222
+   Password: alpine
+
+Diagnostics: ich doctor
+EOF
+exec bash
