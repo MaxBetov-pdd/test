@@ -103,6 +103,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Boot an ICH A12/A13 ramdisk through libusb")
     parser.add_argument("--bootchain", help="bootchain directory; defaults to .last_bootchain")
     parser.add_argument("--bootargs", default=DEFAULT_BOOTARGS)
+    parser.add_argument(
+        "--boot-command",
+        choices=("bootx", "memboot"),
+        default="bootx",
+        help="patched iBoot command used for the final kernel handoff (default: bootx)",
+    )
     parser.add_argument("--recovery-timeout", type=float, default=120)
     parser.add_argument(
         "--expected-board",
@@ -117,13 +123,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--console-log",
         default=str(ROOT / "boot-console.log"),
-        help="capture the iBoot USB console around bootx (default: boot-console.log)",
+        help="capture the iBoot USB console around the final handoff (default: boot-console.log)",
     )
     parser.add_argument(
         "--console-wait",
         type=float,
         default=20,
-        help="seconds to keep capturing the USB console after bootx",
+        help="seconds to keep capturing the USB console after the final handoff",
     )
     parser.add_argument(
         "--resume-recovery",
@@ -292,12 +298,12 @@ def main() -> int:
                 client.send_command(f"setenvnp boot-args {args.bootargs}")
             except IchUsbError:
                 client.send_command(f"setenv boot-args {args.bootargs}")
-            print("bootx...")
+            print(f"{args.boot_command}...")
             try:
-                client.send_command("bootx")
+                client.send_command(args.boot_command)
             except IchUsbError as exc:
-                # USB normally disappears immediately when bootx succeeds.
-                warning(f"bootx disconnected USB: {exc}")
+                # USB normally disappears immediately when the handoff succeeds.
+                warning(f"{args.boot_command} disconnected USB: {exc}")
             if console_started and args.console_wait > 0:
                 time.sleep(args.console_wait)
             client.stop_console()
