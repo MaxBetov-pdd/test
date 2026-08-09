@@ -18,6 +18,22 @@ N841_UPDATE_DEVICE_TREE_TRAMPOLINE = 0x2C8DC
 # 18.1 d321: 0x10CC; 18.6+ d321: 0xE10 (same shape as n841).
 D321_EARLY_FALSE_POSITIVES = (0xE10, 0x10CC)
 
+# d79 / mBoot-18000.122.4 (iOS 26.5.2 23F84).
+#
+# The shared "%s" string beside "rd=md0" has four ADRP+ADD references in
+# this image.  The generic patchfinder redirects all four, but only the first
+# belongs to the restore boot-argument builder.  The others format AMCC
+# interrupt errors, NVRAM values, and exception diagnostics.  In particular,
+# corrupting the NVRAM formatter can alter the value written by setenvnp
+# immediately before bootx.
+D79_IMAGE4_CANARY_BRANCH = 0x20650
+D79_IMAGE4_CALLBACK_RESULT = 0x20654
+D79_BOOT_ARGS_REFERENCE = 0x23EEC
+D79_FALSE_BOOT_ARGS_REFERENCES = (0x430D4, 0xA0558, 0xE3534)
+D79_IBOOT_BASE = 0x870000000
+D79_EXPECTED_BUILD_TAG = b"mBoot-18000.122.4"
+D79_EXPECTED_BUILD_TAG_COUNT = 2
+
 NOP = bytes.fromhex("1f2003d5")
 MOV_X0_ZERO = bytes.fromhex("000080d2")
 
@@ -132,10 +148,10 @@ def find_d321_image4_canary(stock: bytes) -> int:
     return best
 
 
-def apply_boot_args(data: bytearray) -> None:
+def apply_boot_args(data: bytearray) -> int:
     if data.count(RAMDISK_BOOT_ARGS) == 1:
         print("boot-args already set to ramdisk form")
-        return
+        return data.index(RAMDISK_BOOT_ARGS)
     if len(LEEKSOV_BOOT_ARGS) != len(RAMDISK_BOOT_ARGS):
         raise SystemExit("internal boot-args length mismatch")
     if data.count(LEEKSOV_BOOT_ARGS) != 1:
@@ -146,6 +162,29 @@ def apply_boot_args(data: bytearray) -> None:
     idx = data.index(LEEKSOV_BOOT_ARGS)
     data[idx : idx + len(LEEKSOV_BOOT_ARGS)] = RAMDISK_BOOT_ARGS
     print(f"boot-args → rd=md0 @ 0x{idx:X}")
+    return idx
+
+
+def _decode_adrp_add_target(data: bytes | bytearray, off: int) -> int | None:
+    if off < 0 or off + 8 > len(data):
+        return None
+    adrp = _u32(data, off)
+    add = _u32(data, off + 4)
+    if (adrp & 0x9F000000) != 0x90000000:
+        return None
+    rd = adrp & 0x1F
+    if (add & 0xFF800000) != 0x91000000 or ((add >> 5) & 0x1F) != rd:
+        return None
+    immhi = (adrp >> 5) & 0x7FFFF
+    immlo = (adrp >> 29) & 0x3
+    page_delta = (immhi << 2) | immlo
+    if page_delta & (1 << 20):
+        page_delta -= 1 << 21
+    page = ((D79_IBOOT_BASE + off) & ~0xFFF) + (page_delta << 12)
+    add_imm = (add >> 10) & 0xFFF
+    if (add >> 22) & 1:
+        add_imm <<= 12
+    return page + add_imm - D79_IBOOT_BASE
 
 
 def apply_n841_wrapper(stock: bytes, patched: bytearray) -> None:
@@ -184,6 +223,58 @@ def apply_d321_wrapper(stock: bytes, patched: bytearray) -> None:
     )
 
 
+def apply_d79_wrapper(stock: bytes, patched: bytearray, boot_args_slot: int) -> None:
+    if len(stock) != len(patched):
+        raise SystemExit("stock and patched iBoot sizes differ")
+    if stock.count(D79_EXPECTED_BUILD_TAG) != D79_EXPECTED_BUILD_TAG_COUNT:
+        raise SystemExit(
+            "d79: wrapper is pinned to mBoot-18000.122.4; "
+            "refusing an unverified iBoot build"
+        )
+
+    bl = _u32(stock, D79_IMAGE4_CANARY_BRANCH - 4)
+    bne = _u32(stock, D79_IMAGE4_CANARY_BRANCH)
+    mov = _u32(stock, D79_IMAGE4_CALLBACK_RESULT)
+    if (bl >> 26) != 0b100101:
+        raise SystemExit("d79: expected BL before outlined IMG4 canary")
+    if (bne & 0xFF00001F) != 0x54000001:
+        raise SystemExit("d79: expected B.NE at outlined IMG4 canary")
+    if (mov & 0xFFE0FFE0) != 0xAA0003E0:
+        raise SystemExit("d79: expected MOV X0, Xn after outlined IMG4 canary")
+
+    original_targets = {
+        _decode_adrp_add_target(stock, off)
+        for off in (D79_BOOT_ARGS_REFERENCE, *D79_FALSE_BOOT_ARGS_REFERENCES)
+    }
+    if len(original_targets) != 1 or None in original_targets:
+        raise SystemExit("d79: expected all four stock references to share one %s string")
+    original_target = next(iter(original_targets))
+    if stock[original_target : original_target + 3] != b"%s\0":
+        raise SystemExit(
+            f"d79: shared stock reference at 0x{original_target:X} is not %s"
+        )
+
+    patched[D79_IMAGE4_CANARY_BRANCH : D79_IMAGE4_CANARY_BRANCH + 4] = NOP
+    patched[D79_IMAGE4_CALLBACK_RESULT : D79_IMAGE4_CALLBACK_RESULT + 4] = MOV_X0_ZERO
+
+    target = _decode_adrp_add_target(patched, D79_BOOT_ARGS_REFERENCE)
+    if target != boot_args_slot:
+        rendered = "none" if target is None else f"0x{target:X}"
+        raise SystemExit(
+            "d79: boot-args reference does not target the injected slot "
+            f"(got {rendered}, expected 0x{boot_args_slot:X})"
+        )
+
+    for off in D79_FALSE_BOOT_ARGS_REFERENCES:
+        patched[off : off + 8] = stock[off : off + 8]
+
+    restored = ", ".join(f"0x{off:X}" for off in D79_FALSE_BOOT_ARGS_REFERENCES)
+    print(
+        "applied d79ap 23F84 safe IMG4 / boot-args wrapper "
+        f"(kept 0x{D79_BOOT_ARGS_REFERENCE:X}, restored {restored})"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stock", required=True, type=Path)
@@ -194,11 +285,13 @@ def main() -> None:
 
     stock = args.stock.read_bytes()
     patched = bytearray(args.input.read_bytes())
-    apply_boot_args(patched)
+    boot_args_slot = apply_boot_args(patched)
     if args.board == "n841ap":
         apply_n841_wrapper(stock, patched)
     elif args.board == "d321ap":
         apply_d321_wrapper(stock, patched)
+    elif args.board == "d79ap":
+        apply_d79_wrapper(stock, patched, boot_args_slot)
     else:
         print(
             f"board {args.board}: no board-specific IMG4 wrapper "

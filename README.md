@@ -37,7 +37,10 @@ Every contribution helps maintain and improve this project. Thank you! ❤️
 | **26** | Fixed byte-offset table (`patch/ios26_kernel_byte_patches.py`) |
 | **27+** | Finder + launch constraints (TXM-era) |
 
-iBoot (XR `n841ap` / XS `d321ap` wrappers) is unchanged from the working tree.
+iBoot includes verified XR `n841ap` / XS `d321ap` wrappers and a fail-closed
+`d79ap` wrapper for mBoot-18000.122.4 / 23F84.  The d79 wrapper isolates the
+restore boot-args reference from three unrelated users of the shared `%s`
+string before `setenvnp` / `bootx`.
 
 ## Enter pwned DFU
 
@@ -95,7 +98,7 @@ If iOS 26 byte offsets do not match your exact kernel build, the build fails clo
 |------|------|
 | `build.sh` / `boot.sh` | Build → boot; SSH + on-device `mount_ich` |
 | `patch/iboot_patchfinder.py` | iBoot IMG4 / CTRR / boot-args |
-| `patch/finalize_iboot.py` | `n841ap` / `d321ap` safe wrappers |
+| `patch/finalize_iboot.py` | `n841ap` / `d321ap` wrappers + `d79ap` 23F84 boot-args isolation |
 | `patch/apply_kernel_patches.py` | Routes 18 vs 26 |
 | `patch/ios26_kernel_byte_patches.py` | iOS 26-only offsets |
 | `Darwin/` | kairos / cryptic (optional alternate iBoot tools) |

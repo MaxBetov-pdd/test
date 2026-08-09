@@ -8,6 +8,16 @@ import sys
 from pathlib import Path
 
 from pyimg4 import IMG4, IM4P
+from finalize_iboot import (
+    D79_BOOT_ARGS_REFERENCE,
+    D79_FALSE_BOOT_ARGS_REFERENCES,
+    D79_EXPECTED_BUILD_TAG,
+    D79_EXPECTED_BUILD_TAG_COUNT,
+    D79_IMAGE4_CALLBACK_RESULT,
+    D79_IMAGE4_CANARY_BRANCH,
+    RAMDISK_BOOT_ARGS,
+    _decode_adrp_add_target,
+)
 
 EXPECTED_IMAGES = {
     "devicetree.img4": "rdtr",
@@ -79,6 +89,44 @@ def validate_n841_iboot(iboot_path: Path, stock_path: Path) -> None:
     print("OK: n841ap iBoot wrapper + rd=md0")
 
 
+def validate_d79_iboot(iboot_path: Path, stock_path: Path) -> None:
+    iboot = iboot_path.read_bytes()
+    stock = stock_path.read_bytes()
+    if len(iboot) != len(stock):
+        fail(f"iBoot size differs from stock ({len(iboot)} != {len(stock)})")
+    if stock.count(D79_EXPECTED_BUILD_TAG) != D79_EXPECTED_BUILD_TAG_COUNT:
+        fail("d79 stock iBoot is not the pinned mBoot-18000.122.4 build")
+    if iboot[D79_IMAGE4_CANARY_BRANCH : D79_IMAGE4_CANARY_BRANCH + 4] != NOP:
+        fail("iBoot does not NOP the d79 IMG4 callback canary branch")
+    if iboot[D79_IMAGE4_CALLBACK_RESULT : D79_IMAGE4_CALLBACK_RESULT + 4] != MOV_X0_ZERO:
+        fail("iBoot does not force d79 IMG4 callback success")
+    if iboot.count(RAMDISK_BOOT_ARGS) != 1:
+        fail("d79 iBoot does not contain exactly one finalized ramdisk boot-args slot")
+    boot_args_slot = iboot.index(RAMDISK_BOOT_ARGS)
+    target = _decode_adrp_add_target(iboot, D79_BOOT_ARGS_REFERENCE)
+    if target != boot_args_slot:
+        fail(
+            "d79 boot-args reference targets "
+            f"{target!r}, expected 0x{boot_args_slot:X}"
+        )
+    for off in D79_FALSE_BOOT_ARGS_REFERENCES:
+        if iboot[off : off + 8] != stock[off : off + 8]:
+            fail(f"d79 iBoot modifies unrelated shared-%s reference at 0x{off:X}")
+    print("OK: d79ap 23F84 iBoot wrapper + isolated rd=md0 reference")
+
+
+def validate_selected_kernel(bootchain: Path, mode: str) -> None:
+    active = bootchain / "kernelcache.img4"
+    selected = bootchain / f"kernelcache.img4.{mode}"
+    if not selected.is_file():
+        fail(f"missing selected kernel artifact {selected.name}")
+    if active.read_bytes() != selected.read_bytes():
+        fail(
+            f"kernelcache.img4 does not match {selected.name}; "
+            "restore the selected artifact before booting"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bootchain", required=True, type=Path)
@@ -115,8 +163,10 @@ def main() -> None:
 
     if args.expected_board == "n841ap":
         validate_n841_iboot(iboot, args.stock_iboot)
+    elif args.expected_board == "d79ap":
+        validate_d79_iboot(iboot, args.stock_iboot)
     else:
-        print(f"OK: skipped n841-only iBoot checks for {args.expected_board}")
+        print(f"OK: no board-specific iBoot checks for {args.expected_board}")
 
     if (bootchain / "sptm.img4").is_file():
         print("OK: SPTM staged")
@@ -128,6 +178,7 @@ def main() -> None:
         fail(f"kernel.mode={mode!r} != --kernel-mode {args.kernel_mode!r}")
     if mode == "patched" and not args.allow_patched_kernel:
         fail("patched kernel requires --allow-patched-kernel")
+    validate_selected_kernel(bootchain, mode)
     print(f"OK: kernel mode {mode}")
     print("preflight passed")
 

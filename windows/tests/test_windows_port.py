@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import plistlib
 import socket
 import socketserver
@@ -15,12 +17,17 @@ from unittest import mock
 
 WINDOWS_DIR = Path(__file__).resolve().parents[1]
 ROOT = WINDOWS_DIR.parent
+PATCH_DIR = ROOT / "patch"
 sys.path.insert(0, str(WINDOWS_DIR))
+sys.path.insert(0, str(PATCH_DIR))
 
 import build  # noqa: E402
 import boot  # noqa: E402
+import finalize_iboot  # noqa: E402
 import ich_usb  # noqa: E402
 import iproxy  # noqa: E402
+import preflight  # noqa: E402
+from iboot_patchfinder import encode_add_imm, encode_adrp  # noqa: E402
 from img4tools import extract_im4p, wrap_existing_im4p, wrap_raw  # noqa: E402
 from pyimg4 import IMG4, IM4P  # noqa: E402
 from trustcache import CdHash, append_hashes  # noqa: E402
@@ -64,6 +71,89 @@ class DfuProtocolTests(unittest.TestCase):
             [(call[0], call[1], call[2], call[3], call[4]) for call in device.calls[-3:]],
             [(0x21, 1, 0, 0, b""), (0x21, 8, 0, 0, b""), (0x21, 6, 0, 0, b"")],
         )
+
+
+class D79WrapperTests(unittest.TestCase):
+    @staticmethod
+    def _set_reference(data: bytearray, off: int, target: int, register: int) -> None:
+        base = finalize_iboot.D79_IBOOT_BASE
+        struct.pack_into(
+            "<I",
+            data,
+            off,
+            encode_adrp(register, base + off, (base + target) & ~0xFFF),
+        )
+        struct.pack_into(
+            "<I",
+            data,
+            off + 4,
+            encode_add_imm(register, register, target & 0xFFF),
+        )
+
+    def _images(self) -> tuple[bytearray, bytearray, int]:
+        stock = bytearray(0x100000)
+        stock[0xF1000 : 0xF1000 + len(finalize_iboot.D79_EXPECTED_BUILD_TAG)] = (
+            finalize_iboot.D79_EXPECTED_BUILD_TAG
+        )
+        stock[0xF1040 : 0xF1040 + len(finalize_iboot.D79_EXPECTED_BUILD_TAG)] = (
+            finalize_iboot.D79_EXPECTED_BUILD_TAG
+        )
+        branch = finalize_iboot.D79_IMAGE4_CANARY_BRANCH
+        struct.pack_into("<I", stock, branch - 4, 0x94000000)  # BL
+        struct.pack_into("<I", stock, branch, 0x54000001)  # B.NE
+        struct.pack_into("<I", stock, branch + 4, 0xAA0103E0)  # MOV X0, X1
+
+        original_slot = 0xF0000
+        boot_args_slot = 0xB0000
+        stock[original_slot : original_slot + 3] = b"%s\0"
+        stock[boot_args_slot : boot_args_slot + len(finalize_iboot.RAMDISK_BOOT_ARGS)] = (
+            finalize_iboot.RAMDISK_BOOT_ARGS
+        )
+        references = (
+            finalize_iboot.D79_BOOT_ARGS_REFERENCE,
+            *finalize_iboot.D79_FALSE_BOOT_ARGS_REFERENCES,
+        )
+        for off, register in zip(references, (2, 1, 2, 2)):
+            self._set_reference(stock, off, original_slot, register)
+
+        patched = bytearray(stock)
+        patched[branch : branch + 4] = finalize_iboot.NOP
+        patched[branch + 4 : branch + 8] = finalize_iboot.MOV_X0_ZERO
+        for off, register in zip(references, (2, 1, 2, 2)):
+            self._set_reference(patched, off, boot_args_slot, register)
+        return stock, patched, boot_args_slot
+
+    def test_d79_wrapper_restores_only_unrelated_shared_string_references(self) -> None:
+        stock, patched, boot_args_slot = self._images()
+        finalize_iboot.apply_d79_wrapper(stock, patched, boot_args_slot)
+
+        self.assertNotEqual(
+            patched[
+                finalize_iboot.D79_BOOT_ARGS_REFERENCE :
+                finalize_iboot.D79_BOOT_ARGS_REFERENCE + 8
+            ],
+            stock[
+                finalize_iboot.D79_BOOT_ARGS_REFERENCE :
+                finalize_iboot.D79_BOOT_ARGS_REFERENCE + 8
+            ],
+        )
+        for off in finalize_iboot.D79_FALSE_BOOT_ARGS_REFERENCES:
+            self.assertEqual(patched[off : off + 8], stock[off : off + 8])
+
+    def test_d79_wrapper_fails_closed_on_unconfirmed_canary(self) -> None:
+        stock, patched, boot_args_slot = self._images()
+        struct.pack_into("<I", stock, finalize_iboot.D79_IMAGE4_CANARY_BRANCH, 0)
+        with self.assertRaisesRegex(SystemExit, "expected B.NE"):
+            finalize_iboot.apply_d79_wrapper(stock, patched, boot_args_slot)
+
+    def test_preflight_rejects_active_kernel_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            bootchain = Path(temp)
+            (bootchain / "kernelcache.img4").write_bytes(b"stock")
+            (bootchain / "kernelcache.img4.patched").write_bytes(b"patched")
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    preflight.validate_selected_kernel(bootchain, "patched")
 
 
 class TargetIdentityTests(unittest.TestCase):
