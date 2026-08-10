@@ -25,6 +25,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          brew tap blacktop/tap
+          brew trust blacktop/tap
           brew install blacktop/tap/ipsw gnu-tar rsync
           python3 -m venv "$RUNNER_TEMP/d79-venv"
           "$RUNNER_TEMP/d79-venv/bin/pip" install pyimg4 requests
