@@ -25,11 +25,9 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew tap blacktop/tap
-          brew trust blacktop/tap
-          brew install blacktop/tap/ipsw gnu-tar rsync
+          brew install gnu-tar rsync
           python3 -m venv "$RUNNER_TEMP/d79-venv"
-          "$RUNNER_TEMP/d79-venv/bin/pip" install pyimg4 requests
+          "$RUNNER_TEMP/d79-venv/bin/pip" install pyimg4 remotezip requests
           echo "$RUNNER_TEMP/d79-venv/bin" >> "$GITHUB_PATH"
 
       - name: Fetch and selectively extract d79 firmware

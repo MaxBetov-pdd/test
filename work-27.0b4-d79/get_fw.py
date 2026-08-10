@@ -8,9 +8,10 @@ the 10+ GiB IPSW. Use --full only when preparing a complete restore tree.
 import argparse
 import plistlib
 import shutil
-import subprocess
 import sys
+import urllib.parse
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 DEVICE = "iPhone12,8"
@@ -18,6 +19,11 @@ BUILD = "24A5390f"
 VERSION = "27.0"
 BOARD = "d79ap"
 EXTRACT_DIR = f"{DEVICE}_{VERSION}_{BUILD}_Restore"
+PINNED_URL = (
+    "https://updates.cdn-apple.com/2026SpringSeed/fullrestores/140-57338/"
+    "E68F62EA-5270-4792-A89E-E09691874E08/"
+    "iPhone12,8_27.0_24A5390f_Restore.ipsw"
+)
 
 HERE = Path(__file__).resolve().parent
 
@@ -84,12 +90,16 @@ def component_paths(identity):
     return out
 
 
-def find_archive(explicit):
+def find_archive(explicit, url):
+    if explicit and url:
+        sys.exit("[!] --ipsw and --url are mutually exclusive")
     if explicit:
         archive = Path(explicit).expanduser().resolve()
         if not archive.is_file():
             sys.exit(f"[!] IPSW not found: {archive}")
         return archive
+    if url:
+        return url
 
     candidates = []
     for base in (HERE, HERE.parent):
@@ -97,22 +107,22 @@ def find_archive(explicit):
     candidates = sorted({p.resolve() for p in candidates})
     if candidates:
         return candidates[0]
+    return PINNED_URL
 
-    ipsw = shutil.which("ipsw")
-    if not ipsw:
-        sys.exit("[!] local IPSW not found. Pass --ipsw PATH or place it in the project "
-                 "root. The optional `ipsw` downloader is also not installed.")
-    print(f"[*] downloading {DEVICE} build {BUILD}")
-    rc = subprocess.call(
-        [ipsw, "download", "ipsw", "--device", DEVICE, "--build", BUILD, "--confirm"],
-        cwd=HERE,
-    )
-    if rc:
-        sys.exit("[!] IPSW download failed")
-    found = sorted(HERE.glob(f"*{BUILD}*.ipsw"))
-    if not found:
-        sys.exit("[!] downloader completed but no matching IPSW appeared")
-    return found[0].resolve()
+
+@contextmanager
+def open_archive(source):
+    parsed = urllib.parse.urlparse(str(source))
+    if parsed.scheme in ("http", "https"):
+        try:
+            from remotezip import RemoteZip
+        except ImportError:
+            sys.exit("[!] remote IPSW extraction needs `pip install remotezip`")
+        with RemoteZip(str(source), timeout=120) as archive:
+            yield archive
+    else:
+        with zipfile.ZipFile(source) as archive:
+            yield archive
 
 
 def safe_extract_member(archive, member, dest):
@@ -121,7 +131,10 @@ def safe_extract_member(archive, member, dest):
     parts = PurePosixPath(member).parts
     if member.startswith("/") or ".." in parts:
         sys.exit(f"[!] unsafe member path in IPSW: {member!r}")
-    archive.extract(member, dest)
+    target = dest / Path(PurePosixPath(member))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with archive.open(member) as source, target.open("wb") as output:
+        shutil.copyfileobj(source, output, length=1024 * 1024)
 
 
 def verify_tree(dest, expected_paths):
@@ -139,11 +152,15 @@ def verify_tree(dest, expected_paths):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ipsw", help="path to the local IPSW (auto-detected if omitted)")
+    ap.add_argument("--url", help="remote IPSW URL; only selected members are downloaded")
     ap.add_argument("--full", action="store_true",
                     help="extract the whole IPSW instead of boot/SSHRD components only")
     args = ap.parse_args()
 
-    archive_path = find_archive(args.ipsw)
+    archive_path = find_archive(args.ipsw, args.url)
+    is_remote = urllib.parse.urlparse(str(archive_path)).scheme in ("http", "https")
+    if args.full and is_remote:
+        sys.exit("[!] --full requires a local IPSW; remote mode is selective by design")
     dest = HERE / EXTRACT_DIR
     marker = dest / ".extract-complete"
     previous_mode = marker.read_text(encoding="ascii").strip() if marker.is_file() else ""
@@ -151,7 +168,7 @@ def main():
     print(f"[*] using {archive_path}")
     print(f"[*] extraction mode: {mode}")
 
-    with zipfile.ZipFile(archive_path) as archive:
+    with open_archive(archive_path) as archive:
         try:
             manifest_bytes = archive.read("BuildManifest.plist")
         except KeyError:
