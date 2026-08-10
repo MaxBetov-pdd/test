@@ -1,0 +1,19 @@
+# Build output and downloads, none of it belongs in git.
+CFW/
+Ramdisk/
+iPhone12,8_27.0_24A5390f_Restore/
+*.ipsw
+payload/
+boot/work/
+aea_out/
+__pycache__/
+
+# Per-device, per-restore. Dump your own; see README.md step 4.
+t8030_apticket.der
+dev_sep.img4
+
+# Intermediates left by the build.
+*.raw
+*.im4p
+*.img4
+*.bak

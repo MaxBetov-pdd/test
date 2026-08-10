@@ -1,0 +1,90 @@
+name: Build d79 SSH ramdisk
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/usbliter8-d79
+    paths:
+      - "work-27.0b4-d79/**"
+      - "tools/**"
+      - ".github/workflows/build-d79-sshrd.yml"
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check runner architecture
+        run: |
+          test "$(uname -m)" = arm64
+          chmod +x tools/*
+
+      - name: Install build dependencies
+        run: |
+          brew install blacktop/tap/ipsw gnu-tar rsync
+          python3 -m venv "$RUNNER_TEMP/d79-venv"
+          "$RUNNER_TEMP/d79-venv/bin/pip" install pyimg4 requests
+          echo "$RUNNER_TEMP/d79-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch and selectively extract d79 firmware
+        working-directory: work-27.0b4-d79
+        run: python3 ./get_fw.py
+
+      - name: Supply the device/build wrapping manifest
+        working-directory: work-27.0b4-d79
+        env:
+          D79_IM4M_B64: ${{ secrets.D79_IM4M_B64 }}
+        run: |
+          test -n "$D79_IM4M_B64"
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          Path("t8030_apticket.der").write_bytes(base64.b64decode(os.environ["D79_IM4M_B64"], validate=True))
+          PY
+          test -s t8030_apticket.der
+
+      - name: Build SSH ramdisk
+        working-directory: work-27.0b4-d79
+        run: python3 ./get_rd.py
+
+      - name: Verify artifact contents
+        working-directory: work-27.0b4-d79
+        run: |
+          python3 ./apply_patches.py ibss-ramdisk Ramdisk/iBSS.raw
+          for f in iBEC.img4 RestoreRamdisk.img4 DeviceTree.img4 SEP.img4 \
+                   Kernelcache.img4 TXM.img4 SPTM.img4 RestoreTrustCache.img4; do
+            test -s "Ramdisk/$f"
+          done
+          mkdir verify-ramdisk
+          ../tools/img4 -i Ramdisk/RestoreRamdisk.img4 -o verify-ramdisk.dmg
+          hdiutil attach -readonly -nobrowse -mountpoint verify-ramdisk verify-ramdisk.dmg
+          test -x verify-ramdisk/usr/local/bin/dropbear
+          test -x verify-ramdisk/usr/libexec/sftp-server
+          hdiutil detach verify-ramdisk
+          rm -rf verify-ramdisk verify-ramdisk.dmg
+
+          ../tools/img4 -i Ramdisk/iBEC.img4 -o verify-ibec.raw
+          python3 ./apply_patches.py ibss-ramdisk verify-ibec.raw
+          ../tools/img4 -i Ramdisk/Kernelcache.img4 -o verify-kernel.raw
+          python3 ./apply_patches.py kc-restore verify-kernel.raw
+          ../tools/img4 -i Ramdisk/TXM.img4 -o verify-txm.raw
+          python3 ./apply_patches.py txm-restore verify-txm.raw
+          rm verify-ibec.raw verify-kernel.raw verify-txm.raw
+
+          cp boot_rd.sh Ramdisk/
+          cp ../tools/usbliter8ctl Ramdisk/
+          cp ../tools/img4tool Ramdisk/
+
+      - name: Upload bootchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: d79-24A5390f-sshrd
+          path: work-27.0b4-d79/Ramdisk
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 14
