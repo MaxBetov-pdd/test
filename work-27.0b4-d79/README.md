@@ -20,7 +20,7 @@ This directory is a separate board port. Do not substitute files from `work-27.0
 | Real SEP in SSH ramdisk | Not working | `AppleSEPManager` reported `sep-booted = No`; console repeated `waitForSEPEndpoint ... scrd` |
 | Data volume (`/mnt2`) | Not working | mount blocked while SEP was unavailable |
 | Normal-boot patch tables | Static verification only | pristine d79 iBSS/iBEC, TXM and kernel bytes match all guarded offsets |
-| Normal iOS boot / jailbreak | Untested on d79 | no successful d79 normal boot yet |
+| Normal iOS boot / jailbreak | First device attempt failed | patched kernel left iBoot, showed verbose, then lost USB before normal userland enumeration |
 | Custom restore | Untested and destructive | do not infer support from SSHRD |
 | Display, Wi-Fi, baseband, Sileo, tweaks, activation, Apple services | Untested on d79 | n104 results do not transfer automatically |
 
@@ -82,9 +82,11 @@ Before opening USB, both Linux loaders verify `artifact-info.json`: product, boa
 
 ## Normal-boot development boundary
 
-The next milestone is one tethered, non-restore normal-boot experiment with complete host and iBoot logs. Before that test, the generated normal bootchain must pass `verify_d79_port.py`, and the loader must validate `ProductType`, board, build, and ECID before uploading anything.
+The first tethered, non-restore normal-boot experiment reached patched-kernel verbose output, then the display went black and USB disappeared before `05ac:12a8` normal userland enumeration. Neither Linux nor Windows saw a replacement USB device. Repeating that artifact cannot add evidence.
 
 The same Actions workflow publishes a separate `d79-24A5390f-normal-experimental` artifact. It contains no restore ramdisk and its Linux loader never calls `idevicerestore`, `restore`, or a filesystem tool. It is kept separate from the verified SSHRD artifact so they cannot be confused. Device execution remains unverified and requires an explicit test decision.
+
+The workflow also publishes `d79-24A5390f-normal-diagnostic`. It uses `kc-diag`, keeps the LCD backlight enabled, requests halt-on-panic, and omits launchd boot settings. Its purpose is to leave the first useful kernel failure visible on the phone; it is not expected to reach userland and is not a jailbreak payload. Run it with `bash ./boot_diag_linux.sh ...` and photograph the final readable lines.
 
 The upstream jailbreak substitutes kernel/TXM behavior for missing SEP/AKS functionality. That may make local SSH, bootstrap, Sileo, and tweaks possible, but it does not create a real SEP session and does not guarantee passcode, Data-volume access, activation, iCloud, push notifications, Apple Pay, or other Apple services.
 

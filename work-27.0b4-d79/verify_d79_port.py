@@ -33,8 +33,8 @@ COMPONENTS = {
 }
 
 PATCH_MATRIX = {
-    "iBSS": ("ibss-restore", "ibss-ramdisk", "ibss-normal"),
-    "iBEC": ("ibss-restore", "ibss-ramdisk", "ibss-normal"),
+    "iBSS": ("ibss-restore", "ibss-ramdisk", "ibss-normal", "ibss-normal-diag"),
+    "iBEC": ("ibss-restore", "ibss-ramdisk", "ibss-normal", "ibss-normal-diag"),
     "TXM": ("txm-restore", "txm-boot"),
     "kernel": ("kc-restore", "kc-boot", "kc-diag"),
 }
@@ -204,7 +204,7 @@ def main():
         return 1
 
     print("\n[PASS] d79 offline port verification completed")
-    print("       11 guarded table/binary checks + 2 DeviceTree transformations")
+    print("       13 guarded table/binary checks + 2 DeviceTree transformations")
     print("       No phone was accessed and no source file was modified.")
     return 0
 

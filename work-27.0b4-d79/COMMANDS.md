@@ -68,7 +68,7 @@ There is intentionally no d79 day-to-day jailbreak command yet.
 - `make_cfw.py` and `restore_cfw.sh` are destructive and have not completed a d79 device test.
 - n104 Sileo, TrollStore, activation, Wi-Fi, and tweak commands are not d79 results.
 
-The next approved phone experiment will be a tethered normal boot with timestamped logs and no restore or filesystem write.
+The first tethered normal attempt left iBoot, showed kernel verbose, then lost USB before normal-mode enumeration. Do not repeat the same artifact. The next experiment is the separate panic-preserving diagnostic artifact.
 
 The Actions workflow prepares this as a separate artifact named `d79-24A5390f-normal-experimental`. Do not run it as though it were the verified SSH ramdisk. Its eventual Linux command is:
 
@@ -77,3 +77,11 @@ bash ./boot_normal_linux.sh --irecovery /path/to/irecovery --expected-ecid YOUR_
 ```
 
 That loader does not contain a restore path. It sends the tethered bootchain, records all USB transitions, and treats a new Recovery device as a failed normal boot.
+
+For `d79-24A5390f-normal-diagnostic`:
+
+```sh
+bash ./boot_diag_linux.sh --irecovery /path/to/irecovery --expected-ecid YOUR_ECID
+```
+
+Keep the screen visible and photograph the last readable lines. The diagnostic build uses `kc-diag` and halt-on-panic boot arguments; no ramdisk, restore, mount, or filesystem write is present.

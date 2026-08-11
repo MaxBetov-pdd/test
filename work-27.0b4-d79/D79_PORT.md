@@ -42,12 +42,13 @@ Inside the ramdisk, `uname` identified `PATCHED_ARM64_T8030 iPhone12,8`. `/mnt1`
 - The device console repeatedly timed out waiting for `sep-endpoint:scrd`.
 - `/mnt2` did not mount while SEP was unavailable.
 - A stock restore `rspt/rtrx/rsep` experiment reached the kernel but did not enumerate final USB. This experiment is not part of the normal port and is not evidence that a stock SEP chain can trust modified userland.
+- The first `kc-boot` tethered normal experiment completed every upload and `bootx`. The phone briefly showed verbose kernel output, then went black; Recovery USB disconnected and neither Linux nor Windows observed normal-mode `05ac:12a8` or any replacement Apple USB device. This localizes the failure after kernel entry but before normal userland USB enumeration. No restore or filesystem write occurred.
 
 The `scrd` warning also appeared during boots where USB and SSH worked, so it must not be used alone to diagnose USB enumeration.
 
 ## Not yet verified
 
-- d79 normal iOS boot with `ibss-normal`, `txm-boot`, `kc-boot`, and `patch_dt2.py`;
+- successful d79 normal iOS boot with `ibss-normal`, `txm-boot`, `kc-boot`, and `patch_dt2.py`;
 - the d79 display path during normal boot;
 - custom restore/CFW;
 - fake-SEP behavior after normal boot;
@@ -57,11 +58,11 @@ Claims from the n104 port remain n104-only until a d79 device log proves them.
 
 ## Next milestone
 
-Build and validate a complete normal bootchain offline, then perform one tethered normal-boot test that:
+Build and validate the separate `kc-diag` normal bootchain, then perform one diagnostic test that:
 
 1. validates build, board, and ECID before upload;
 2. captures a timestamped host log and every USB transition;
 3. does not restore, erase, mount writable, or install anything;
-4. stops after determining whether the normal kernel reaches USB/SSH.
+4. keeps the first kernel panic visible and records whether any USB mode returns.
 
 Only after that succeeds should System/Data modification be considered as a separate milestone.

@@ -192,3 +192,88 @@ jobs:
           if-no-files-found: error
           compression-level: 6
           retention-days: 14
+
+  build-normal-diagnostic:
+    needs: verify-port
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          chmod +x tools/*
+          brew install rsync
+          python3 -m venv "$RUNNER_TEMP/d79-diag-venv"
+          "$RUNNER_TEMP/d79-diag-venv/bin/pip" install pyimg4 remotezip requests
+          echo "$RUNNER_TEMP/d79-diag-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch and verify pristine d79 components
+        working-directory: work-27.0b4-d79
+        run: |
+          python3 ./get_fw.py
+          python3 ./verify_d79_port.py
+
+      - name: Supply the device/build wrapping manifest
+        working-directory: work-27.0b4-d79
+        env:
+          D79_IM4M_B64: ${{ secrets.D79_IM4M_B64 }}
+        run: |
+          test -n "$D79_IM4M_B64"
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          Path("t8030_apticket.der").write_bytes(
+              base64.b64decode(os.environ["D79_IM4M_B64"], validate=True)
+          )
+          PY
+          test -s t8030_apticket.der
+
+      - name: Build panic-preserving diagnostic bootchain
+        working-directory: work-27.0b4-d79
+        env:
+          D79_BOOT_VARIANT: diagnostic
+        run: python3 ./get_boot.py
+
+      - name: Verify diagnostic artifact
+        working-directory: work-27.0b4-d79
+        run: |
+          for f in iBSS.raw iBEC.img4 RestoreLogo.img4 ANE.img4 AOP.img4 AVE.img4 \
+                   SPTM.img4 TXM.img4 GFX.img4 ISP.img4 PMP.img4 \
+                   RestoreTrustCache.img4 SIO.img4 WCH.img4 DeviceTree.img4 \
+                   SEP.img4 Kernelcache.img4; do
+            test -s "Ramdisk/$f"
+          done
+          test ! -e Ramdisk/RestoreRamdisk.img4
+
+          python3 ./apply_patches.py ibss-normal-diag Ramdisk/iBSS.raw
+          ../tools/img4 -i Ramdisk/iBEC.img4 -o verify-diag-ibec.raw
+          python3 ./apply_patches.py ibss-normal-diag verify-diag-ibec.raw
+          ../tools/img4 -i Ramdisk/TXM.img4 -o verify-diag-txm.raw
+          python3 ./apply_patches.py txm-boot verify-diag-txm.raw
+          ../tools/img4 -i Ramdisk/Kernelcache.img4 -o verify-diag-kernel.raw
+          python3 ./apply_patches.py kc-diag verify-diag-kernel.raw
+          ../tools/img4 -i Ramdisk/DeviceTree.img4 -o verify-diag-dt.raw
+          python3 - <<'PY'
+          from pathlib import Path
+          import patch_dt2
+          data = Path("verify-diag-dt.raw").read_bytes()
+          if not patch_dt2.verify(data):
+              raise SystemExit("diagnostic DeviceTree verification failed")
+          PY
+          rm verify-diag-ibec.raw verify-diag-txm.raw verify-diag-kernel.raw \
+             verify-diag-dt.raw
+
+          cp boot_sshrd_linux.py boot_normal_linux.py boot_diag_linux.sh Ramdisk/
+          python3 ./write_artifact_info.py --mode normal-diagnostic --directory Ramdisk
+
+      - name: Upload panic-preserving diagnostic bootchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: d79-24A5390f-normal-diagnostic
+          path: work-27.0b4-d79/Ramdisk
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 14

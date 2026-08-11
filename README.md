@@ -20,7 +20,7 @@ Anything else requires finding the correct offsets to make it work.
 
 The d79 port has completed static verification and a real-device SSH ramdisk boot. PWN DFU, the iBSS/iBEC chain, firmware upload, the patched kernel, USB mux, SSH, and read-only mounts of `/mnt1` and `/mnt6` have been observed on an `iPhone12,8`.
 
-Normal-boot jailbreak support is **not yet device-verified**. The guarded d79 tables currently cover 5 iBSS/iBEC patches, 9 TXM patches and 118 kernel patches, but a successful SSH ramdisk does not prove that a custom restore or normal boot is safe. Real SEP was not available in the tested SSH ramdisk, and `/mnt2` did not mount.
+Normal-boot jailbreak support is **not working yet**. The first non-restore device test completed the guarded iBSS/iBEC, TXM, firmware, DeviceTree, SEP-wrapper, and patched-kernel uploads; after `bootx` it briefly showed verbose output, then lost USB before normal userland enumeration. Real SEP was not available in the tested SSH ramdisk, and `/mnt2` did not mount. The next artifact is a separate panic-preserving diagnostic build, not another blind normal-boot retry.
 
 See the [d79 README](work-27.0b4-d79/README.md) for the exact verified/static-only/untested matrix and [port log](work-27.0b4-d79/D79_PORT.md) for device evidence. Do not follow the n104 restore tutorial on an SE 2.
 

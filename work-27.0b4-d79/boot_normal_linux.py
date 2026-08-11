@@ -23,8 +23,14 @@ from boot_sshrd_linux import (
 )
 
 
-def wait_for_normal_usb(timeout, old_recovery):
-    print(f"Waiting up to {int(timeout)}s for normal-mode USB 05ac:12a8...")
+def observe_post_boot(timeout, old_recovery, diagnostic=False):
+    if diagnostic:
+        print(
+            f"Observing USB for {int(timeout)}s. Keep the phone screen visible and "
+            "photograph the final panic/verbose lines."
+        )
+    else:
+        print(f"Waiting up to {int(timeout)}s for normal-mode USB 05ac:12a8...")
     deadline = time.monotonic() + timeout
     last_normal = last_recovery = object()
     recovery_disappeared = False
@@ -45,6 +51,12 @@ def wait_for_normal_usb(timeout, old_recovery):
         elif recovery_disappeared and recovery != old_recovery:
             raise BootError("device left bootx and returned to a new Recovery transport")
         time.sleep(1)
+    if diagnostic:
+        print(
+            "Diagnostic observation window ended with no USB. This is an expected "
+            "diagnostic outcome; the phone screen is the kernel log source."
+        )
+        return
     raise BootError("normal boot was sent, but 05ac:12a8 did not appear before timeout")
 
 
@@ -55,6 +67,12 @@ def main():
     parser.add_argument("--irecovery", default=os.environ.get("IRECOVERY", "irecovery"))
     parser.add_argument("--recovery-timeout", type=float, default=600)
     parser.add_argument("--normal-timeout", type=float, default=300)
+    parser.add_argument(
+        "--artifact-mode",
+        choices=("normal-experimental", "normal-diagnostic"),
+        default="normal-experimental",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
 
     if os.geteuid() != 0:
@@ -64,7 +82,8 @@ def main():
         raise BootError("irecovery was not found; install libirecovery or pass --irecovery")
 
     directory = args.bootchain.expanduser().resolve()
-    validate_artifact(directory, "normal-experimental")
+    diagnostic = args.artifact_mode == "normal-diagnostic"
+    validate_artifact(directory, args.artifact_mode)
     files = {
         "iBSS": require_file(directory, "iBSS.raw", "iBSS.patched.bin"),
         "iBEC": require_file(directory, "iBEC.img4", "iBEC.patched.img4"),
@@ -85,7 +104,11 @@ def main():
         "kernel": require_file(directory, "Kernelcache.img4", "kernelcache.img4"),
     }
 
-    print("EXPERIMENT: tethered normal boot; no restore and no host-side filesystem write")
+    if diagnostic:
+        print("DIAGNOSTIC: panic-preserving tethered boot; expected to stop before userland")
+    else:
+        print("EXPERIMENT: tethered normal boot; no restore and no host-side filesystem write")
+    print("SAFETY: no ramdisk, restore command, mount, or host-side filesystem write")
     query_dfu(args.expected_ecid)
     recovery = Recovery(str(executable), EXPECTED_BOARD, args.expected_ecid)
 
@@ -126,7 +149,7 @@ def main():
     old_recovery = usb_token(RECOVERY_PID)
     recovery.command("bootx", check=False)
     print("bootx sent; no ramdisk was loaded and no restore command was issued")
-    wait_for_normal_usb(args.normal_timeout, old_recovery)
+    observe_post_boot(args.normal_timeout, old_recovery, diagnostic)
     return 0
 
 

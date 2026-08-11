@@ -22,6 +22,19 @@ def patch(offset, data):
 
 APPLY_PATCHES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apply_patches.py")
 
+BOOT_VARIANT = os.environ.get("D79_BOOT_VARIANT", "normal")
+BOOT_TABLES = {
+    "normal": ("ibss-normal", "kc-boot"),
+    "diagnostic": ("ibss-normal-diag", "kc-diag"),
+}
+if BOOT_VARIANT not in BOOT_TABLES:
+    sys.exit("[!] D79_BOOT_VARIANT must be 'normal' or 'diagnostic'")
+IBOOT_PATCH_TABLE, KERNEL_PATCH_TABLE = BOOT_TABLES[BOOT_VARIANT]
+print(
+    f"[*] d79 boot variant: {BOOT_VARIANT} "
+    f"(iBoot={IBOOT_PATCH_TABLE}, kernel={KERNEL_PATCH_TABLE})"
+)
+
 
 def apply_patches(table, path):
     """Verify and apply a patch table, aborting the build if anything is unexpected.
@@ -71,7 +84,7 @@ else:
 if not os.path.exists("CFW/Firmware/dfu/iBSS.d79.RELEASE.im4p.bak"):
     os.system("cp CFW/Firmware/dfu/iBSS.d79.RELEASE.im4p CFW/Firmware/dfu/iBSS.d79.RELEASE.im4p.bak")
 os.system("../tools/img4 -i CFW/Firmware/dfu/iBSS.d79.RELEASE.im4p -o Ramdisk/iBSS.raw")
-apply_patches("ibss-normal", "Ramdisk/iBSS.raw")
+apply_patches(IBOOT_PATCH_TABLE, "Ramdisk/iBSS.raw")
 # The n104-only display-init patch is deliberately not applied on d79.
 
 # 2. Grab & Patch iBEC
@@ -82,7 +95,7 @@ if not os.path.exists("CFW/Firmware/dfu/iBEC.d79.RELEASE.im4p.bak"):
 # non-.bak path, so reading that would build the normal-boot iBEC on top of an
 # already-restore-patched binary. get_rd.py already reads .bak; this matches it.
 os.system("../tools/img4 -i CFW/Firmware/dfu/iBEC.d79.RELEASE.im4p.bak -o iBEC.raw")
-apply_patches("ibss-normal", "iBEC.raw")
+apply_patches(IBOOT_PATCH_TABLE, "iBEC.raw")
 os.system("../tools/img4tool -c iBEC.im4p -t ibec iBEC.raw")
 os.system("../tools/img4 -i iBEC.im4p -o Ramdisk/iBEC.img4 -M t8030_apticket.der")
 
@@ -210,7 +223,7 @@ if not os.path.exists("CFW/kernelcache.release.iphone12c.bak"):
     os.system("cp CFW/kernelcache.release.iphone12c CFW/kernelcache.release.iphone12c.bak")
 os.system("pyimg4 im4p extract -i CFW/kernelcache.release.iphone12c.bak -o kcache.raw")
 # patch 
-apply_patches("kc-boot", "kcache.raw")
+apply_patches(KERNEL_PATCH_TABLE, "kcache.raw")
 
 #create im4p
 os.system("pyimg4 im4p create -i kcache.raw -o krnl.im4p -d KernelManagement_host-514 -f rkrn --lzfse")
