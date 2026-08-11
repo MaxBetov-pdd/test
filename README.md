@@ -6,14 +6,23 @@
 
 ![iPhone 11 on iOS 27.0 beta 4, running Sileo, with a root shell over SSH](images/iphone11-sileo.jpg)
 
-Two devices are supported, as separate ports. The directories are **not** interchangeable: the display panel, the board-tagged firmware filenames and every offset differ.
+Three device ports are present. The directories are **not** interchangeable: the display panel, board-tagged firmware filenames and offsets differ. The SE 2 port is experimental and its current limits are documented separately.
 
 | Device | Board | iOS | Directory |
 | :---- | :---- | :---- | :---- |
 | **iPhone 11** | **`n104ap`** | **27.0 beta 4** (`24A5390f`) | **[`work-27.0b4-n104`](work-27.0b4-n104/)** |
+| iPhone SE (2nd generation) | `d79ap` | 27.0 beta 4 (`24A5390f`) | [`work-27.0b4-d79`](work-27.0b4-d79/) **experimental** |
 | iPhone 11 Pro / Pro Max | `d431ap` / `d421ap` | 27.0 beta 2, beta 3 | `work-27.0b2`, `work-27.0b3` |
 
 Anything else requires finding the correct offsets to make it work.
+
+## iPhone SE 2 (d79ap), iOS 27.0 beta 4
+
+The d79 port has completed static verification and a real-device SSH ramdisk boot. PWN DFU, the iBSS/iBEC chain, firmware upload, the patched kernel, USB mux, SSH, and read-only mounts of `/mnt1` and `/mnt6` have been observed on an `iPhone12,8`.
+
+Normal-boot jailbreak support is **not yet device-verified**. The guarded d79 tables currently cover 5 iBSS/iBEC patches, 9 TXM patches and 118 kernel patches, but a successful SSH ramdisk does not prove that a custom restore or normal boot is safe. Real SEP was not available in the tested SSH ramdisk, and `/mnt2` did not mount.
+
+See the [d79 README](work-27.0b4-d79/README.md) for the exact verified/static-only/untested matrix and [port log](work-27.0b4-d79/D79_PORT.md) for device evidence. Do not follow the n104 restore tutorial on an SE 2.
 
 ## iPhone 11 (n104ap), iOS 27.0 beta 4
 
@@ -38,7 +47,7 @@ Both are explained in that directory's README.
 
 The original port, by [34306](https://github.com/34306). The [Tutorial](#tutorial) below is written for these devices, and is his work along with everything it references in `patches/`.
 
-[Hardware setup](#hardware-setup) applies to both ports: same rig, same wiring.
+[Hardware setup](#hardware-setup) applies to all ports: same rig, same wiring.
 
 ## Hardware setup
 

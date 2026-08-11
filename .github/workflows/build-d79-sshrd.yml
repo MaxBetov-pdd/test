@@ -1,4 +1,4 @@
-name: Build d79 SSH ramdisk
+name: Verify and build d79 artifacts
 
 on:
   workflow_dispatch:
@@ -11,7 +11,26 @@ on:
       - ".github/workflows/build-d79-sshrd.yml"
 
 jobs:
+  verify-port:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install verification dependencies
+        run: python3 -m pip install pyimg4 remotezip requests
+
+      - name: Fetch pristine d79 boot components
+        working-directory: work-27.0b4-d79
+        run: python3 ./get_fw.py
+
+      - name: Verify all d79 firmware patch tables
+        working-directory: work-27.0b4-d79
+        run: python3 ./verify_d79_port.py
+
   build:
+    needs: verify-port
     runs-on: macos-15
     timeout-minutes: 90
 
@@ -77,13 +96,98 @@ jobs:
           rm verify-ibec.raw verify-kernel.raw verify-txm.raw
 
           cp boot_rd.sh Ramdisk/
+          cp boot_sshrd_linux.py boot_sshrd_linux.sh Ramdisk/
           cp ../tools/usbliter8ctl Ramdisk/
           cp ../tools/img4tool Ramdisk/
+          python3 ./write_artifact_info.py --mode sshrd --directory Ramdisk
 
       - name: Upload bootchain
         uses: actions/upload-artifact@v4
         with:
           name: d79-24A5390f-sshrd
+          path: work-27.0b4-d79/Ramdisk
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 14
+
+  build-normal-experimental:
+    needs: verify-port
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          chmod +x tools/*
+          brew install rsync
+          python3 -m venv "$RUNNER_TEMP/d79-normal-venv"
+          "$RUNNER_TEMP/d79-normal-venv/bin/pip" install pyimg4 remotezip requests
+          echo "$RUNNER_TEMP/d79-normal-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch and verify pristine d79 components
+        working-directory: work-27.0b4-d79
+        run: |
+          python3 ./get_fw.py
+          python3 ./verify_d79_port.py
+
+      - name: Supply the device/build wrapping manifest
+        working-directory: work-27.0b4-d79
+        env:
+          D79_IM4M_B64: ${{ secrets.D79_IM4M_B64 }}
+        run: |
+          test -n "$D79_IM4M_B64"
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          Path("t8030_apticket.der").write_bytes(
+              base64.b64decode(os.environ["D79_IM4M_B64"], validate=True)
+          )
+          PY
+          test -s t8030_apticket.der
+
+      - name: Build experimental normal bootchain
+        working-directory: work-27.0b4-d79
+        run: python3 ./get_boot.py
+
+      - name: Verify normal boot artifact
+        working-directory: work-27.0b4-d79
+        run: |
+          for f in iBSS.raw iBEC.img4 RestoreLogo.img4 ANE.img4 AOP.img4 AVE.img4 \
+                   SPTM.img4 TXM.img4 GFX.img4 ISP.img4 PMP.img4 \
+                   RestoreTrustCache.img4 SIO.img4 WCH.img4 DeviceTree.img4 \
+                   SEP.img4 Kernelcache.img4; do
+            test -s "Ramdisk/$f"
+          done
+          test ! -e Ramdisk/RestoreRamdisk.img4
+
+          python3 ./apply_patches.py ibss-normal Ramdisk/iBSS.raw
+          ../tools/img4 -i Ramdisk/iBEC.img4 -o verify-normal-ibec.raw
+          python3 ./apply_patches.py ibss-normal verify-normal-ibec.raw
+          ../tools/img4 -i Ramdisk/TXM.img4 -o verify-normal-txm.raw
+          python3 ./apply_patches.py txm-boot verify-normal-txm.raw
+          ../tools/img4 -i Ramdisk/Kernelcache.img4 -o verify-normal-kernel.raw
+          python3 ./apply_patches.py kc-boot verify-normal-kernel.raw
+          ../tools/img4 -i Ramdisk/DeviceTree.img4 -o verify-normal-dt.raw
+          python3 - <<'PY'
+          from pathlib import Path
+          import patch_dt2
+          data = Path("verify-normal-dt.raw").read_bytes()
+          if not patch_dt2.verify(data):
+              raise SystemExit("normal DeviceTree verification failed")
+          PY
+          rm verify-normal-ibec.raw verify-normal-txm.raw verify-normal-kernel.raw \
+             verify-normal-dt.raw
+
+          cp boot_sshrd_linux.py boot_normal_linux.py boot_normal_linux.sh Ramdisk/
+          python3 ./write_artifact_info.py --mode normal-experimental --directory Ramdisk
+
+      - name: Upload experimental normal bootchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: d79-24A5390f-normal-experimental
           path: work-27.0b4-d79/Ramdisk
           if-no-files-found: error
           compression-level: 6
