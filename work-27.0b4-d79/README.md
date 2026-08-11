@@ -73,7 +73,7 @@ The artifact includes a Linux loader that waits for and validates each new USB t
 
 ```sh
 sudo pacman -S --needed libirecovery python-pyusb libimobiledevice
-bash ./boot_sshrd_linux.sh --expected-ecid YOUR_ECID
+bash ./boot_sshrd_linux.sh --irecovery /path/to/irecovery --expected-ecid YOUR_ECID
 ```
 
 Every run writes `logs/sshrd-YYYYMMDD-HHMMSS.log`. The ECID argument is optional for public artifacts but recommended as a safety lock when testing a specific phone.

@@ -37,7 +37,7 @@ On CachyOS/Linux, after downloading and entering the artifact directory:
 
 ```sh
 sudo pacman -S --needed libirecovery python-pyusb libimobiledevice
-bash ./boot_sshrd_linux.sh --expected-ecid YOUR_ECID
+bash ./boot_sshrd_linux.sh --irecovery /path/to/irecovery --expected-ecid YOUR_ECID
 ```
 
 The loader follows both Recovery re-enumerations, validates `d79ap` and the optional ECID, waits for `05ac:12a8`, and saves the complete output under `logs/`.
@@ -73,7 +73,7 @@ The next approved phone experiment will be a tethered normal boot with timestamp
 The Actions workflow prepares this as a separate artifact named `d79-24A5390f-normal-experimental`. Do not run it as though it were the verified SSH ramdisk. Its eventual Linux command is:
 
 ```sh
-bash ./boot_normal_linux.sh --expected-ecid YOUR_ECID
+bash ./boot_normal_linux.sh --irecovery /path/to/irecovery --expected-ecid YOUR_ECID
 ```
 
 That loader does not contain a restore path. It sends the tethered bootchain, records all USB transitions, and treats a new Recovery device as a failed normal boot.
