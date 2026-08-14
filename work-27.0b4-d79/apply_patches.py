@@ -967,12 +967,22 @@ TABLES = {
     # rather than transplanting anyone else's offset.
     "ibss-normal": (IBSS, VALIDATE + bootargs(
         "-v debug=0x2014e launchd_unsecure_cache=1 wdt=-1 backlight-level=1024")),
-    # Diagnostic normal boot: bit 0 in debug requests a halt at panic, and the explicit
-    # panic wait keeps the last useful lines on the LCD.  keepsyms makes those lines more
-    # actionable.  This deliberately omits launchd settings: the diagnostic kernel is
-    # expected to stop before userland and is not a jailbreak payload.
+    # Diagnostic normal boot, "safe" variant. bit 0 in debug (DB_HALT) keeps the last
+    # panic lines on the LCD; keepsyms makes them name real functions; backlight-level
+    # keeps the LCD lit. Unlike the earlier variant this does NOT pass wdt=-1 or
+    # panic-wait-forever=1: the hardware watchdog stays enabled, so once the kernel halts
+    # on panic and stops petting it, the SoC force-resets on its own after the watchdog
+    # window instead of holding forever. The previous build (wdt=-1 + panic-wait-forever=1)
+    # left the phone stuck and hard to recover. DB_HALT holds the panic on screen long
+    # enough to photograph it; the device then auto-reboots to a recoverable state.
+    #
+    # Fallback if the watchdog window is too short to read the panic: also clear DB_HALT
+    # (debug=0x2014e) so a panic does a normal software reboot after logging.
+    #
+    # Deliberately omits launchd settings: the diagnostic kernel is expected to stop before
+    # userland and is not a jailbreak payload.
     "ibss-normal-diag": (IBSS, VALIDATE + bootargs(
-        "-v debug=0x2014f wdt=-1 backlight-level=1024 keepsyms=1 panic-wait-forever=1")),
+        "-v debug=0x2014f backlight-level=1024 keepsyms=1")),
     # n104 display and Pinot-ID patches are intentionally absent for d79: their offsets
     # and panel assumptions are board-specific and have not been derived here.
     "restored_external": (RESTORED, RESTORED_EXTERNAL),
