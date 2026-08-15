@@ -51,9 +51,18 @@ if not os.path.exists("Ramdisk"):
 # Override with IPSW_SRC=/path/to/extracted if you keep firmware elsewhere.
 IPSW_SRC = os.environ.get("IPSW_SRC", "iPhone12,8_27.0_24A5390f_Restore")
 extract_mode = Path(IPSW_SRC, ".extract-complete")
-if not extract_mode.is_file() or extract_mode.read_text(encoding="ascii").strip() != "full":
+_mode = extract_mode.read_text(encoding="ascii").strip() if extract_mode.is_file() else ""
+# CFW_COMPONENTS_ONLY builds just the components the restore actually patches (iBEC,
+# DeviceTree, the restore ramdisk, TXM, kernelcache, plus the raw iBSS usbliter8ctl boots)
+# from a *selective* extraction. The stock ~10G RootFS is not patched and is not needed
+# here; it is assembled onto a full IPSW tree on the machine that runs restore_cfw.sh. This
+# keeps the build off a macOS runner's small disk and keeps the artifact small. Default
+# (unset) still demands a full tree, which is what a local end-to-end restore needs.
+COMPONENTS_ONLY = os.environ.get("CFW_COMPONENTS_ONLY") == "1"
+if not COMPONENTS_ONLY and _mode != "full":
     sys.exit("[!] make_cfw.py needs a complete IPSW tree. Run ./get_fw.py --full first. "
-             "The default selective extraction is intentionally only for SSHRD/boot.")
+             "The default selective extraction is intentionally only for SSHRD/boot. "
+             "For a CI components-only build, run ./get_fw.py then set CFW_COMPONENTS_ONLY=1.")
 COPY_DONE = "CFW/.copy-complete"
 if not os.path.exists(COPY_DONE):
     if not os.path.isdir(IPSW_SRC):

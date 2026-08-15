@@ -277,3 +277,65 @@ jobs:
           if-no-files-found: error
           compression-level: 6
           retention-days: 14
+
+  build-cfw:
+    needs: verify-port
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check runner architecture
+        run: |
+          test "$(uname -m)" = arm64
+          chmod +x tools/*
+
+      - name: Install build dependencies
+        run: |
+          brew install rsync
+          python3 -m venv "$RUNNER_TEMP/d79-cfw-venv"
+          "$RUNNER_TEMP/d79-cfw-venv/bin/pip" install pyimg4 remotezip requests
+          echo "$RUNNER_TEMP/d79-cfw-venv/bin" >> "$GITHUB_PATH"
+
+      # Selective extraction is enough: the restore only patches iBEC, DeviceTree, the
+      # restore ramdisk, TXM, kernelcache and the raw iBSS. The stock RootFS is never
+      # patched and is added back on the machine that runs restore_cfw.sh.
+      - name: Fetch d79 restore components (selective)
+        working-directory: work-27.0b4-d79
+        run: |
+          python3 ./get_fw.py
+          python3 ./verify_d79_port.py
+
+      # No APTicket / IM4M secret here on purpose: make_cfw.py patches the IPSW components
+      # in place as unsigned im4p. idevicerestore signs them at restore time through the
+      # local TSS proxy, so the build needs no device manifest.
+      - name: Build and verify patched CFW components
+        working-directory: work-27.0b4-d79
+        env:
+          CFW_COMPONENTS_ONLY: "1"
+        run: python3 ./make_cfw.py
+
+      - name: Stage patched components (mirrors the CFW/ layout)
+        working-directory: work-27.0b4-d79
+        run: |
+          mkdir -p out/CFW/Firmware/dfu out/CFW/Firmware/all_flash out/Ramdisk
+          cp CFW/Firmware/dfu/iBEC.d79.RELEASE.im4p          out/CFW/Firmware/dfu/
+          cp CFW/Firmware/all_flash/DeviceTree.d79ap.im4p    out/CFW/Firmware/all_flash/
+          cp CFW/Firmware/txm.iphoneos.release.im4p          out/CFW/Firmware/
+          cp CFW/094-13753-162.dmg                           out/CFW/
+          cp CFW/kernelcache.release.iphone12c               out/CFW/
+          cp Ramdisk/iBSS.raw                                out/Ramdisk/
+          ( cd out && /usr/bin/find . -type f ! -name SHA256SUMS -exec shasum -a 256 {} + \
+              > SHA256SUMS )
+          echo "=== staged CFW components ==="
+          ( cd out && cat SHA256SUMS )
+
+      - name: Upload patched CFW components
+        uses: actions/upload-artifact@v4
+        with:
+          name: d79-24A5390f-cfw-components
+          path: work-27.0b4-d79/out
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 14
